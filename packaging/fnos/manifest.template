@@ -1,0 +1,13 @@
+appname=quarkdrive
+version=0.1.7
+display_name=QuarkDrive
+desc=飞牛 NAS 原生夸克网盘个人及分享下载器（实验性版本）
+source=thirdparty
+platform=PLATFORM_REPLACE
+maintainer=QuarkDrive Community
+desktop_uidir=ui
+desktop_applaunchname=quarkdrive.main
+ctl_stop=true
+checkport=false
+disable_authorization_path=false
+changelog=v0.1.7: improved download request headers and failure diagnostics

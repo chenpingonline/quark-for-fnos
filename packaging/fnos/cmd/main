@@ -1,0 +1,54 @@
+#!/bin/sh
+set -eu
+APP="${TRIM_APPDEST:?missing TRIM_APPDEST}"
+VAR="${TRIM_PKGVAR:?missing TRIM_PKGVAR}"
+PID="$VAR/quarkdrive.pid"
+LOG="$VAR/quarkdrive.log"
+BIN="$APP/bin/quarkdrive"
+SOCKET="$APP/app.sock"
+check() {
+  [ -f "$PID" ] || return 1
+  id=$(cat "$PID" 2>/dev/null) || return 1
+  case "$id" in *[!0-9]*|'') return 1;; esac
+  kill -0 "$id" 2>/dev/null || return 1
+  [ -r "/proc/$id/exe" ] || return 1
+  exe=$(readlink "/proc/$id/exe" 2>/dev/null || true)
+  [ "$exe" = "$BIN" ] || [ "$exe" = "$BIN (deleted)" ]
+}
+case "${1:-}" in
+start)
+  mkdir -p "$VAR"
+  if check; then exit 0; fi
+  test -x "$BIN" || { echo 'QuarkDrive binary not found' > "${TRIM_TEMP_LOGFILE:-/dev/null}"; exit 1; }
+  DOWNLOAD_DIR="${TRIM_DATA_SHARE_PATHS%%:*}"
+  if [ -z "$DOWNLOAD_DIR" ]; then
+    DOWNLOAD_DIR="/var/apps/quarkdrive/share/quarkdrive/downloads"
+  fi
+  # Resources are provisioned by fnOS, not created by the application with root permissions.
+  if [ ! -d "$DOWNLOAD_DIR" ]; then
+    echo "Missing fnOS data-share directory: $DOWNLOAD_DIR" > "${TRIM_TEMP_LOGFILE:-/dev/null}"
+    exit 1
+  fi
+  export QUARKDRIVE_DATA_DIR="$VAR/data"
+  export QUARKDRIVE_WEB_DIR="$APP/www"
+  export QUARKDRIVE_SOCKET="$SOCKET"
+  export QUARKDRIVE_DOWNLOAD_DIR="$DOWNLOAD_DIR"
+  cd "$APP"
+  nohup "$BIN" >> "$LOG" 2>&1 &
+  echo "$!" > "$PID"
+  sleep 1
+  if ! check; then echo 'QuarkDrive failed to start; inspect application log' > "${TRIM_TEMP_LOGFILE:-/dev/null}"; exit 1; fi
+  ;;
+stop)
+  if check; then
+    id=$(cat "$PID")
+    kill -TERM "$id" 2>/dev/null || true
+    i=0
+    while [ "$i" -lt 20 ] && kill -0 "$id" 2>/dev/null; do sleep 1; i=$((i+1)); done
+    if kill -0 "$id" 2>/dev/null; then kill -KILL "$id" 2>/dev/null || true; fi
+  fi
+  rm -f "$PID" "$SOCKET"
+  ;;
+status) check && exit 0 || exit 3;;
+*) echo "unsupported action: $1" > "${TRIM_TEMP_LOGFILE:-/dev/null}"; exit 1;;
+esac

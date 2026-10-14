@@ -1,0 +1,10 @@
+/dist/
+/backend/data/
+/backend/downloads/
+/.DS_Store
+*.log
+*.pid
+*.part
+node_modules/
+.env
+*.key

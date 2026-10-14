@@ -1,0 +1,3 @@
+#!/bin/sh
+# No change to persistent NAS downloads or application data on install/upgrade/uninstall.
+exit 0

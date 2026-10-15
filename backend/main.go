@@ -100,7 +100,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(s.web, "index.html"))
 		return
 	}
-	if path == "/assets/app.js" || path == "/assets/app.css" || path == "/assets/qr.js" || path == "/assets/theme.js" || path == "/assets/file-pages.js" {
+	if path == "/assets/membership/vip.png" || path == "/assets/membership/svip.png" || path == "/assets/membership/zvip.png" || path == "/assets/app.js" || path == "/assets/app.css" || path == "/assets/qr.js" || path == "/assets/theme.js" || path == "/assets/file-pages.js" || path == "/assets/fnos-theme.js" || path == "/vendor/trim-web-app.js" {
 		http.ServeFile(w, r, filepath.Join(s.web, strings.TrimPrefix(path, "/")))
 		return
 	}
@@ -132,6 +132,13 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			errorReply(w, 401, e)
 		} else {
 			reply(w, 200, v)
+		}
+	case sub == "auth/membership" && r.Method == "GET":
+		info, err := s.quark.membership(r.Context())
+		if err != nil {
+			errorReply(w, 502, err)
+		} else {
+			reply(w, 200, info)
 		}
 	case sub == "auth/account" && r.Method == "DELETE":
 		if e := s.store.setCredential(""); e != nil {
@@ -254,6 +261,25 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, map[string]any{"tasks": publicTasks(s.store.snapshot().Tasks)})
 	case sub == "tasks" && r.Method == "POST":
 		s.createTasks(w, r)
+	case sub == "tasks/cleanup" && r.Method == "POST":
+		var x struct {
+			IDs         []string `json:"ids"`
+			DeleteFiles bool     `json:"delete_files"`
+		}
+		if err := decode(r, &x); err != nil {
+			errorReply(w, 400, err)
+			return
+		}
+		if len(x.IDs) == 0 || len(x.IDs) > 10000 {
+			errorReply(w, 400, errors.New("请选择 1–10000 条任务记录"))
+			return
+		}
+		result, err := s.engine.cleanupTasks(x.IDs, x.DeleteFiles, authorizedLocations(s.dev))
+		if err != nil {
+			errorReply(w, 500, err)
+			return
+		}
+		reply(w, 200, result)
 	case strings.HasPrefix(sub, "tasks/"):
 		s.taskAction(w, r, strings.Split(sub, "/"))
 	default:

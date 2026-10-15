@@ -39,7 +39,7 @@ class PackagingTests(unittest.TestCase):
 
     def test_icon_size_rejected(self):
         with self.assertRaises(AssertionError):
-            audit.png((audit.PACK / 'ICON.PNG').read_bytes(), 256)
+            audit.png((audit.PACK / 'ICON.PNG').read_bytes(), 64)
 
 if __name__ == '__main__':
     unittest.main()

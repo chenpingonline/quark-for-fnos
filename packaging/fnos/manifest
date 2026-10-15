@@ -1,14 +1,15 @@
 appname=quarkdrive
-version=0.1.14
+version=0.1.17
 display_name=QuarkDrive
 desc=飞牛 NAS 原生夸克网盘个人及分享下载器（实验性版本）
 source=thirdparty
 platform=x86
 maintainer=QuarkDrive Community
+micro_app=true
 desktop_uidir=ui
 desktop_applaunchname=quarkdrive.main
 ctl_stop=true
 checkport=false
 disable_authorization_path=false
-changelog=紧凑下载工具栏与按需展开搜索，完善单页目录、客户端下载适配、实时速度统计及官方分架构打包
+changelog=修复清理NAS文件时父目录不可列出导致的permission denied，保留删除权限与路径安全校验；精简分享下载说明
 os_min_version=1.1.3100

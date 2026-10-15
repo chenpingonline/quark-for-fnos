@@ -32,6 +32,7 @@ def manifest(data):
 def contracts(m, privilege, resource, ui):
     assert m['appname'] == 'quarkdrive'
     assert re.fullmatch(r'\d+\.\d+\.\d+', m['version'])
+    assert m.get('micro_app') == 'true', 'Official frontend SDK requires micro_app=true'
     assert m['platform'] in ['x86', 'arm'], 'Native binaries need architecture-specific packages'
     assert m['os_min_version'] == '1.1.3100', 'Unified gateway minimum OS contract missing'
     assert m['source'] == 'thirdparty' and m['ctl_stop'] == 'true' and m['checkport'] == 'false'
@@ -57,8 +58,10 @@ def source():
         assert p.is_file() and p.stat().st_mode & 0o111, f'Executable hook missing: {name}'
     assert (PACK / 'wizard').is_dir()
     assert '版本 开发预览' in (ROOT / 'frontend/index.html').read_text()
-    png((PACK / 'ICON.PNG').read_bytes(), 64)
+    png((PACK / 'ICON.PNG').read_bytes(), 256)
     png((PACK / 'ICON_256.PNG').read_bytes(), 256)
+    for name in ['icon_64.png', 'icon_256.png']:
+        png((PACK / 'app/ui/images' / name).read_bytes(), 256)
     print('Source manifest, privilege, resource, gateway, hooks and icons: passed')
     return m
 
@@ -90,7 +93,7 @@ def package(path, tool=None):
         privilege = json.loads(read(outer, entries, 'config/privilege'))
         resource = json.loads(read(outer, entries, 'config/resource'))
         assert read(outer, entries, 'LICENSE') == (ROOT / 'LICENSE').read_bytes()
-        png(read(outer, entries, 'ICON.PNG'), 64)
+        png(read(outer, entries, 'ICON.PNG'), 256)
         png(read(outer, entries, 'ICON_256.PNG'), 256)
         for name in HOOKS:
             member = entries['cmd/' + name]
@@ -118,7 +121,7 @@ def package(path, tool=None):
             assert read(app, entries, 'www/' + relative) == data, f'Stale frontend: {relative}'
             web[relative] = digest(data)
         for size in [64, 256]:
-            png(read(app, entries, f'ui/images/icon_{size}.png'), size)
+            png(read(app, entries, f'ui/images/icon_{size}.png'), 256)
     result = {'version': m['version'], 'architecture': arch, 'appname': m['appname'],
               'os_min_version': m['os_min_version'], 'sha256': digest(Path(path).read_bytes()),
               'binary_sha256': digest(binary), 'web_sha256': web,

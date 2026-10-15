@@ -7,7 +7,7 @@
   const state = {
     page: 'drive', drive: {parent:'0', stack:[{id:'0',name:'全部文件'}], files:[], selected:new Map(), total:0, search:'',sort:'name',direction:1},
     share: {parent:'0', stack:[{id:'0',name:'分享文件'}], files:[], selected:new Map(), total:0, preview:null,sort:'name',direction:1},
-    tasks:[], filter:'all', qr:null, poll:null, settings:null, locations:[], account:null,
+    tasks:[], taskSelected:new Set(), taskBatchBusy:false, filter:'all', qr:null, poll:null, settings:null, locations:[], account:null,
     detailId:null, downloadKind:null, busy:false, settingsDirty:false, settingsSaving:false, settingsReady:false, settingsLoading:false, loginRequest:0, modal:null, modalTrigger:null, settingSection:'account-section', taskFresh:false, tasksRefreshing:false
   };
   const bytes = value => { const n = Number(value) || 0; if(n>=1073741824)return (n/1073741824).toFixed(2)+' GB'; if(n>=1048576)return (n/1048576).toFixed(1)+' MB'; if(n>=1024)return (n/1024).toFixed(1)+' KB'; return n+' B'; };
@@ -56,7 +56,7 @@
   function replaceContent(el,html){
     if(el.innerHTML===html)return;
     const focused=document.activeElement;
-    const attrs=el.contains(focused)?['id','data-id','data-select','data-detail','data-task-action','data-go'].map(key=>[key,focused.getAttribute(key)]).filter(([,value])=>value!==null):[];
+    const attrs=el.contains(focused)?['id','data-id','data-select','data-task-select','data-detail','data-task-action','data-go'].map(key=>[key,focused.getAttribute(key)]).filter(([,value])=>value!==null):[];
     el.innerHTML=html;
     if(attrs.length){
       const replacement=[...el.querySelectorAll('button,input,summary,[tabindex]')].find(item=>attrs.every(([key,value])=>item.getAttribute(key)===value));
@@ -210,27 +210,38 @@
   $('download-modal-close').addEventListener('click',()=>hideModal('download-modal'));
   function taskCounts(){const t=state.tasks;return {all:t.length,active:t.filter(active).length,completed:t.filter(x=>x.status==='COMPLETED').length,failed:t.filter(x=>x.status==='FAILED').length,paused:t.filter(x=>x.status==='PAUSED').length}}
   async function refreshTasks(){if(state.tasksRefreshing)return;state.tasksRefreshing=true;try{const out=await api('tasks');state.tasks=out.tasks||[];state.taskFresh=true;renderTasks();if(state.detailId&&!$('task-modal').classList.contains('hidden'))renderDetail()}catch(e){state.taskFresh=false;renderTasks();if(state.detailId&&!$('task-modal').classList.contains('hidden'))renderDetail();throw e}finally{state.tasksRefreshing=false}}
+  const canStartTask=t=>['PAUSED','FAILED'].includes(t.status);
+  const canPauseTask=t=>active(t);
+  const visibleTasks=()=>state.tasks.filter(t=>state.filter==='all'||(state.filter==='active'?active(t):state.filter==='failed'?t.status==='FAILED':state.filter==='paused'?t.status==='PAUSED':t.status==='COMPLETED'));
+  function renderTaskSelection(){
+    const selected=state.tasks.filter(t=>state.taskSelected.has(t.id)),visible=visibleTasks(),count=visible.filter(t=>state.taskSelected.has(t.id)).length;
+    $('task-all').checked=visible.length>0&&count===visible.length;$('task-all').indeterminate=count>0&&count<visible.length;
+    $('task-all').disabled=!visible.length||!state.taskFresh||state.taskBatchBusy;
+    $('task-batch-actions').classList.toggle('hidden',!selected.length);
+    $('task-selected-count').textContent=`已选 ${selected.length} 项`;
+    $('task-batch-start').disabled=state.taskBatchBusy||!state.taskFresh||!selected.some(canStartTask);
+    $('task-batch-pause').disabled=state.taskBatchBusy||!state.taskFresh||!selected.some(canPauseTask);
+    const cleanup=selected.length?selected:visible;
+    $('task-cleanup').disabled=state.taskBatchBusy||!state.taskFresh||!cleanup.some(t=>['COMPLETED','FAILED'].includes(t.status));
+  }
   function renderTasks(){
+    const visibleIds=new Set(visibleTasks().map(t=>t.id));for(const id of state.taskSelected)if(!visibleIds.has(id))state.taskSelected.delete(id);
     const c=taskCounts();Object.entries(c).forEach(([key,value])=>{$('filter-'+key).textContent=value;$('filter-'+key).classList.toggle('hidden',value===0)});
-    const running=state.tasks.filter(t=>t.status==='DOWNLOADING');
-    $('queue-summary').classList.toggle('hidden',!state.tasks.length);
-    $('queue-running').textContent=`正在下载 ${running.length} 项`;
-    $('queue-speed').textContent=state.taskFresh?`总速度 ${speed(running.reduce((sum,t)=>sum+Math.max(0,Number(t.speed)||0),0))}`:'连接中断，等待更新';
-    $('queue-waiting').textContent=`等待中 ${state.tasks.filter(t=>['QUEUED','RESOLVING','RETRY_WAIT','BLOCKED'].includes(t.status)).length} 项`;
     $('task-count').textContent=c.active;$('task-count').classList.toggle('hidden',!c.active);
-    const f=state.filter;
-    const filtered=state.tasks.filter(t=>f==='all'||(f==='active'?active(t):f==='failed'?t.status==='FAILED':f==='paused'?t.status==='PAUSED':t.status==='COMPLETED'));
+    const filtered=visibleTasks();
     replaceContent($('task-list'),filtered.length?filtered.slice().reverse().map(t=>{
       const p=progress(t),status=t.status||'QUEUED',type=fileKind({name:t.name,folder:false});
-      const buttons=active(t)?`<button class="icon-btn" title="暂停任务" aria-label="暂停 ${esc(t.name)}" data-task-action="pause" data-id="${esc(t.id)}">${ico('pause')}</button>`:status==='PAUSED'?`<button class="icon-btn" title="继续下载" aria-label="继续 ${esc(t.name)}" data-task-action="resume" data-id="${esc(t.id)}">${ico('play')}</button>`:status==='FAILED'?`<button class="icon-btn" title="重试任务" aria-label="重试 ${esc(t.name)}" data-task-action="retry" data-id="${esc(t.id)}">${ico('refresh')}</button>`:'<span class="action-placeholder" aria-hidden="true"></span>';
-      return `<tr><td><div class="task-cell"><span class="file-icon ${type}">${ico('file')}</span><div class="minzero"><button class="task-name" title="${esc(t.relative||t.name)}" data-detail="${esc(t.id)}">${esc(t.name)}</button><span class="task-sub">${esc(t.kind==='share'?'分享下载':'我的网盘')}${t.relative&&t.relative!==t.name?' · '+esc(t.relative):''}</span>${t.status==='FAILED'&&t.message?`<span class="task-error" title="${esc(t.message)}">失败原因：${esc(t.message)}</span>`:''}</div></div></td><td>${bytes(t.size)}</td><td><div class="task-progress"><progress class="meter ${status==='COMPLETED'?'done':''}" value="${p.toFixed(2)}" max="100"></progress><span>${p.toFixed(0)}%</span></div></td><td>${status==='DOWNLOADING'&&state.taskFresh?speed(t.speed):'—'}</td><td><span class="status ${esc(status)}">${esc(statuses[status]||status)}</span></td><td><div class="task-actions">${buttons}<button class="icon-btn" title="查看详情" aria-label="查看任务详情" data-detail="${esc(t.id)}">${ico('more')}</button></div></td></tr>`;
+      const buttons=active(t)?`<button class="icon-btn" ${state.taskBatchBusy?'disabled':''} title="暂停任务" aria-label="暂停 ${esc(t.name)}" data-task-action="pause" data-id="${esc(t.id)}">${ico('pause')}</button>`:status==='PAUSED'?`<button class="icon-btn" ${state.taskBatchBusy?'disabled':''} title="继续下载" aria-label="继续 ${esc(t.name)}" data-task-action="resume" data-id="${esc(t.id)}">${ico('play')}</button>`:status==='FAILED'?`<button class="icon-btn" ${state.taskBatchBusy?'disabled':''} title="重试任务" aria-label="重试 ${esc(t.name)}" data-task-action="retry" data-id="${esc(t.id)}">${ico('refresh')}</button>`:'<span class="action-placeholder" aria-hidden="true"></span>';
+      return `<tr class="${state.taskSelected.has(t.id)?'row-selected':''}"><td class="cbox"><input type="checkbox" data-task-select="true" data-id="${esc(t.id)}" aria-label="选择任务 ${esc(t.name)}" ${state.taskSelected.has(t.id)?'checked':''} ${state.taskBatchBusy||!state.taskFresh?'disabled':''}></td><td><div class="task-cell"><span class="file-icon ${type}">${ico('file')}</span><div class="minzero"><button class="task-name" title="${esc(t.relative||t.name)}" data-detail="${esc(t.id)}">${esc(t.name)}</button>${t.status==='FAILED'&&t.message?`<span class="task-error" title="${esc(t.message)}">失败原因：${esc(t.message)}</span>`:''}</div></div></td><td>${bytes(t.size)}</td><td><div class="task-progress"><progress class="meter ${status==='COMPLETED'?'done':''}" value="${p.toFixed(2)}" max="100"></progress><span>${p.toFixed(0)}%</span></div></td><td>${status==='DOWNLOADING'&&state.taskFresh?speed(t.speed):'—'}</td><td><span class="status ${esc(status)}">${esc(statuses[status]||status)}</span></td><td><div class="task-actions">${buttons}<button class="icon-btn" title="查看详情" aria-label="查看任务详情" data-detail="${esc(t.id)}">${ico('more')}</button></div></td></tr>`;
     }).join(''):'');
     $('task-results').classList.toggle('is-empty',!filtered.length);
     $('tasks-empty').classList.toggle('hidden',!!filtered.length);
     const emptyHTML=state.tasks.length?emptyMarkup('暂无符合条件的下载任务','切换其他分类查看任务。'):emptyMarkup('还没有下载任务','从网盘或分享链接选择文件，创建第一个下载任务。','<button class="btn primary" data-go="drive">去我的网盘</button><button class="btn secondary" data-go="share">解析分享链接</button>');
     if($('tasks-empty').innerHTML!==emptyHTML)$('tasks-empty').innerHTML=emptyHTML;
+    renderTaskSelection();
   }
   function selectTaskTab(el){
+    if(state.filter!==el.dataset.filter)state.taskSelected.clear();
     state.filter=el.dataset.filter;
     document.querySelectorAll('.tab').forEach(x=>{const on=x===el;x.classList.toggle('selected',on);x.setAttribute('aria-selected',String(on));x.tabIndex=on?0:-1});
     $('task-results').setAttribute('aria-labelledby',el.id);renderTasks();
@@ -245,6 +256,63 @@
     });
   });
   $('task-refresh').addEventListener('click',()=>run(refreshTasks));
+  $('task-all').addEventListener('change',()=>{if(state.taskBatchBusy)return;for(const t of visibleTasks())$('task-all').checked?state.taskSelected.add(t.id):state.taskSelected.delete(t.id);renderTasks()});
+  $('task-list').addEventListener('change',e=>{const input=e.target;if(!input.matches('[data-task-select]')||state.taskBatchBusy)return;input.checked?state.taskSelected.add(input.dataset.id):state.taskSelected.delete(input.dataset.id);renderTasks()});
+  async function batchTaskAction(action){
+    if(state.taskBatchBusy||!state.taskFresh)return;
+    const targets=state.tasks.filter(t=>state.taskSelected.has(t.id)&&(action==='start'?canStartTask(t):canPauseTask(t)));
+    if(!targets.length)return;
+    state.taskBatchBusy=true;renderTasks();
+    const failed=[];let succeeded=0;
+    try{
+      // Bound concurrent requests; preserve individual failures and continue the remaining tasks.
+      let next=0;
+      await Promise.all(Array.from({length:Math.min(4,targets.length)},async()=>{
+        while(next<targets.length){const t=targets[next++],operation=action==='pause'?'pause':t.status==='FAILED'?'retry':'resume';
+          try{await api(`tasks/${encodeURIComponent(t.id)}/${operation}`,'POST');succeeded++}
+          catch(e){failed.push({id:t.id,name:t.name,message:e.message||String(e)})}
+        }
+      }));
+      state.taskSelected=new Set(failed.map(t=>t.id));
+      toast(`${action==='start'?'已开始':'已暂停'} ${succeeded} 项${failed.length?`，${failed.length} 项失败：${failed[0].name}（${failed[0].message}）`:''}`);
+    }finally{state.taskBatchBusy=false;await refreshTasks();renderTasks()}
+  }
+  $('task-batch-start').addEventListener('click',()=>run(()=>batchTaskAction('start')));
+  $('task-batch-pause').addEventListener('click',()=>run(()=>batchTaskAction('pause')));
+
+  let cleanupSnapshot=[];
+  function updateCleanupCount(){
+    const files=$('cleanup-delete-files').checked;
+    $('cleanup-title').textContent=`清理 ${cleanupSnapshot.length} 条任务记录？`;
+    $('cleanup-file-warning').classList.toggle('hidden',!files);
+    $('cleanup-confirm').textContent=files?'删除并清理':'清理';
+    $('cleanup-confirm').classList.toggle('danger',files);$('cleanup-confirm').disabled=!cleanupSnapshot.length;
+  }
+  $('task-cleanup').addEventListener('click',()=>{
+    const candidates=state.taskSelected.size?state.tasks.filter(t=>state.taskSelected.has(t.id)):visibleTasks();
+    cleanupSnapshot=candidates.filter(t=>['COMPLETED','FAILED'].includes(t.status)).map(t=>({id:t.id,name:t.name}));
+    if(!cleanupSnapshot.length)return;
+    $('cleanup-delete-files').checked=false;$('cleanup-errors').textContent='';$('cleanup-errors').classList.add('hidden');
+    updateCleanupCount();showModal('cleanup-modal');
+  });
+  $('cleanup-delete-files').addEventListener('change',updateCleanupCount);
+  for(const id of ['cleanup-close','cleanup-cancel'])$(id).addEventListener('click',()=>hideModal('cleanup-modal'));
+  $('cleanup-confirm').addEventListener('click',()=>run(async()=>{
+    const ids=cleanupSnapshot.map(t=>t.id),deleteFiles=$('cleanup-delete-files').checked;if(!ids.length)return;
+    $('cleanup-confirm').disabled=true;$('cleanup-delete-files').disabled=true;
+    try{
+      const out=await api('tasks/cleanup','POST',{ids,delete_files:deleteFiles});
+      const failures=out.failures||[];
+      if(failures.length){
+        $('cleanup-errors').textContent=`${failures.length} 条任务未完成清理，记录已保留${deleteFiles?'（部分文件可能已删除）':''}：\n`+failures.slice(0,8).map(f=>`${cleanupSnapshot.find(t=>t.id===f.id)?.name||'任务'}：${f.message}`).join('\n');
+        $('cleanup-errors').classList.remove('hidden');
+        const failedIds=new Set(failures.map(f=>f.id));cleanupSnapshot=cleanupSnapshot.filter(t=>failedIds.has(t.id));
+      }else hideModal('cleanup-modal');
+      toast(`已清理 ${out.removed} 条记录${out.skipped?'，已跳过 '+out.skipped+' 条状态变化或仍在收尾的任务':''}`);await refreshTasks();
+    }catch(e){$('cleanup-errors').textContent=e.message||String(e);$('cleanup-errors').classList.remove('hidden')}
+    finally{$('cleanup-delete-files').disabled=false;updateCleanupCount()}
+  }));
+
   function renderDetail(){
     const t=state.tasks.find(x=>x.id===state.detailId);if(!t){hideModal('task-modal');return}
     const p=progress(t),chunks=t.chunks||[],done=chunks.filter(x=>x.done).length;
@@ -278,7 +346,7 @@
     const sort=e.target.closest('[data-sort]');if(sort){const kind=sort.closest('#page-drive')?'drive':'share',s=state[kind];s.direction=s.sort===sort.dataset.sort?-s.direction:1;s.sort=sort.dataset.sort;renderFiles(kind);return}
     const bread=e.target.closest('[data-crumb]');if(bread){run(()=>crumb(bread.dataset.crumb,Number(bread.dataset.pos)));return}
     const detail=e.target.closest('[data-detail]');if(detail){openDetail(detail.dataset.detail);return}
-    const button=e.target.closest('[data-task-action]');if(button){run(async()=>{button.disabled=true;try{await api(`tasks/${encodeURIComponent(button.dataset.id)}/${encodeURIComponent(button.dataset.taskAction)}`,'POST');await refreshTasks()}finally{button.disabled=false}})}
+    const button=e.target.closest('[data-task-action]');if(button){if(state.taskBatchBusy)return;run(async()=>{button.disabled=true;try{await api(`tasks/${encodeURIComponent(button.dataset.id)}/${encodeURIComponent(button.dataset.taskAction)}`,'POST');await refreshTasks()}finally{button.disabled=false}})}
   });
   document.addEventListener('change',e=>{const input=e.target;if(!input.dataset.select)return;const s=state[input.dataset.select];const f=s.files.find(v=>v.id===input.dataset.id);if(input.checked&&f)s.selected.set(f.id,f);else s.selected.delete(input.dataset.id);renderFiles(input.dataset.select)});
   async function account(){
@@ -297,18 +365,35 @@
   function updateAccountControls(){
     $('logout-btn').classList.toggle('hidden',!state.account);
     $('account-login').classList.toggle('hidden',!!state.account);
+    $('account-modal-login').textContent=state.account?'退出登录':'扫码登录';
     renderFiles('drive');
   }
   $('account-login').addEventListener('click',()=>run(login));
-  function accountOpen(){
-    if(!state.account){run(login);return}
-    const info=state.account;
-    $('account-modal-content').innerHTML=`<div class="account-detail"><div class="avatar">Q</div><h3>${esc(info.nickname||'夸克用户')}</h3><p>已登录 <span class="status COMPLETED">会话有效</span></p><small>${info.uid?'账号 ID：'+esc(info.uid):'账号信息由夸克接口提供'}</small></div>`;
-    $('account-modal-login').textContent='重新扫码';showModal('account-modal');
+  let membershipRequest=0;
+  function renderAccountInfo(info,membership,loading=false){
+    const names={NORMAL:'普通用户',VIP:'VIP 会员',EXP_VIP:'VIP 会员',SUPER_VIP:'SVIP 超级会员',EXP_SVIP:'SVIP 超级会员',Z_VIP:'SVIP+ 超级会员 Plus'};
+    const badges={VIP:'vip',EXP_VIP:'vip',SUPER_VIP:'svip',EXP_SVIP:'svip',Z_VIP:'zvip'};
+    const kind=membership?.type||'',label=(Object.hasOwn(names,kind)?names[kind]:'')||(kind?`会员（${kind}）`:loading?'正在读取会员信息…':'会员信息暂不可用');
+    const badge=Object.hasOwn(badges,kind)?badges[kind]:null;
+    const marker=badge?`<img class="membership-icon member-${badge}" src="${base}/assets/membership/${badge}.png" alt="${esc(label)}" title="${esc(label)}">`:`<span class="membership-badge">${esc(label)}</span>`;
+    const format=value=>Number(value)>=1099511627776?(Number(value)/1099511627776).toFixed(2)+' TB':bytes(value);
+    const capacity=membership?.total_bytes!=null?`总空间 ${format(membership.total_bytes)}`:'';
+    const usage=membership?.used_bytes!=null?`已用 ${format(membership.used_bytes)}`:'';
+    $('account-modal-content').innerHTML=`<div class="account-detail"><div class="account-name-row"><h3>${esc(info.nickname||'夸克用户')}</h3>${marker}</div>${capacity||usage?`<p class="account-capacity">${esc([usage,capacity].filter(Boolean).join(' / '))}</p>`:''}<small>${info.uid?'账号 ID：'+esc(info.uid):'已登录夸克'}</small></div>`;
   }
-  $('account-open').addEventListener('click',accountOpen);
+  async function accountOpen(){
+    if(!state.account){await login();return}
+    const info=state.account,request=++membershipRequest;
+    renderAccountInfo(info,null,true);$('account-modal-login').textContent='退出登录';showModal('account-modal');
+    let membership=null;try{membership=await api('auth/membership')}catch{ /* Membership failure never invalidates login. */ }
+    if(request===membershipRequest&&state.account===info&&state.modal==='account-modal')renderAccountInfo(info,membership);
+  }
+  $('account-open').addEventListener('click',()=>run(accountOpen));
   $('account-modal-close').addEventListener('click',()=>hideModal('account-modal'));
-  $('account-modal-login').addEventListener('click',()=>{hideModal('account-modal');run(login)});
+  $('account-modal-login').addEventListener('click',()=>run(async()=>{
+    if(!state.account){hideModal('account-modal');await login();return}
+    if(await logout())hideModal('account-modal');
+  }));
   function qrCanvas(url){
     const qr=new window.QuarkQRCode(0,1);qr.addData(url);qr.make();
     const cv=$('qr-canvas'),ctx=cv.getContext('2d'),N=qr.getModuleCount(),cell=cv.width/(N+8);
@@ -333,7 +418,16 @@
   function closeLogin(){state.loginRequest++;clearInterval(state.poll);state.poll=null;state.qr=null;hideModal('login-modal')}
   $('modal-close').addEventListener('click',closeLogin);$('qr-retry').addEventListener('click',()=>run(login));
   $('account-check').addEventListener('click',()=>run(async()=>{const out=await account();toast(out?'账号登录状态正常':'尚未登录或登录已过期')}));
-  $('logout-btn').addEventListener('click',()=>run(async()=>{if(!state.account)throw Error('当前尚未登录');if(!confirm('确定退出当前夸克账号？尚未完成的任务可能无法继续下载。'))return;await api('auth/account','DELETE');await account();state.drive.files=[];renderFiles('drive');toast('已退出登录')}));
+  let logoutPending=false;
+  async function logout(){
+    if(logoutPending||!state.account)return false;
+    if(!confirm('确定退出当前夸克账号？尚未完成的任务可能无法继续下载。'))return false;
+    logoutPending=true;$('logout-btn').disabled=true;$('account-modal-login').disabled=true;
+    try{
+      await api('auth/account','DELETE');await account();state.drive.files=[];state.drive.selected.clear();renderFiles('drive');toast('已退出登录');return true;
+    }finally{logoutPending=false;$('logout-btn').disabled=false;$('account-modal-login').disabled=false}
+  }
+  $('logout-btn').addEventListener('click',()=>run(logout));
   async function loadSettings(){
     if(state.settingsLoading||state.settingsDirty)return;state.settingsLoading=true;
     const fields=[...document.querySelectorAll('#downloads-section input,#storage-section select')];fields.forEach(el=>el.disabled=true);settingsStatus('正在加载下载设置…');
@@ -376,7 +470,8 @@
   }
   document.querySelectorAll('.setting-nav').forEach(btn=>btn.addEventListener('click',()=>settingSection(btn.dataset.section)));
   settingSection(state.settingSection);
-  function syncThemeControls(){const preference=window.QuarkDriveTheme?.getPreference()||'auto';$('setting-theme').value=preference;document.querySelectorAll('input[name="theme-mode"]').forEach(i=>i.checked=i.value===preference)}
+  function syncThemeControls(){const preference=window.QuarkDriveTheme?.getPreference()||'auto';$('setting-theme').value=preference;document.querySelectorAll('input[name="theme-mode"]').forEach(i=>i.checked=i.value===preference);$('theme-source').textContent=preference==='auto'?(window.QuarkDriveTheme?.getSource()==='fnos'?'当前跟随 fnOS 主题':'未连接到 fnOS 主题，暂时跟随浏览器'):'手动主题，仅保存在当前浏览器'}
+  window.addEventListener('quarkdrive:theme',syncThemeControls);
   document.querySelectorAll('input[name="theme-mode"]').forEach(el=>el.addEventListener('change',()=>{window.QuarkDriveTheme.setPreference(el.value);syncThemeControls()}));
   $('setting-theme').addEventListener('change',e=>{window.QuarkDriveTheme.setPreference(e.target.value);syncThemeControls()});
   document.addEventListener('keydown',e=>{
@@ -388,8 +483,8 @@
       else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}
     }
   });
-  for(const name of ['login-modal','task-modal','account-modal','download-modal'])$(name).addEventListener('click',e=>{if(e.target!==$(name))return;if(name==='login-modal')closeLogin();else hideModal(name)});
+  for(const name of ['login-modal','task-modal','account-modal','download-modal','cleanup-modal'])$(name).addEventListener('click',e=>{if(e.target!==$(name))return;if(name==='login-modal')closeLogin();else hideModal(name)});
   syncThemeControls();renderFiles('drive');renderFiles('share');
-  setInterval(()=>{if(state.page==='tasks')run(refreshTasks)},1000);
+  setInterval(()=>{if(state.page==='tasks'&&!state.taskBatchBusy)run(refreshTasks)},1000);
   run(async()=>{ if(await account()) await loadFiles('drive'); });run(loadSettings);
 })();

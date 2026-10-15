@@ -121,7 +121,7 @@ def run(screenshots=False):
         snap('02-share-light.png')
         page.locator('[data-page=tasks]').click();page.wait_for_timeout(200)
         assert page.locator('#task-list tr').count()==len(tasks),'tasks missing'
-        assert '总速度' in page.locator('#queue-speed').inner_text()
+        assert page.locator('#queue-summary').count()==0
         snap('03-tasks-light.png')
         page.locator('[data-detail=t1]').first.click();page.locator('#task-modal').wait_for(state='visible')
         assert not page.locator('#task-diagnostics').evaluate('(el) => el.open')

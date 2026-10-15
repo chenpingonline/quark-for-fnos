@@ -18,12 +18,12 @@ jobs:
         working-directory: backend
         run: go test -race -count=1 ./...
       - name: Validate embedded frontend JS
-        run: node --check frontend/assets/app.js && node --check frontend/assets/file-pages.js && node --check frontend/assets/qr.js
+        run: node --check frontend/assets/app.js && node --check frontend/assets/file-pages.js && node --check frontend/assets/qr.js && node --input-type=module --check < frontend/assets/fnos-theme.js && node --input-type=module --check < frontend/vendor/trim-web-app.js
       - name: Go vet
         working-directory: backend
         run: go vet ./...
       - name: Theme tests and fnOS source contracts
-        run: node --test tests/theme.test.cjs tests/file-pages.test.cjs && python3 scripts/audit-fpk.py --source && python3 tests/packaging_test.py
+        run: node --test tests/theme.test.cjs tests/file-pages.test.cjs tests/logout.test.cjs tests/membership-view.test.cjs && python3 scripts/audit-fpk.py --source && python3 tests/packaging_test.py
       - name: Cross-compile Linux binaries
         run: bash scripts/build.sh
       - name: Upload binaries (not official FPK)

@@ -33,6 +33,22 @@ func TestReferencedUIAssetsAreServed(t *testing.T) {
 	if len(refs) == 0 {
 		t.Fatal("no frontend assets found")
 	}
+	// Module dependencies are fetched separately by browsers and need routes too.
+	bridge, err := os.ReadFile(filepath.Join(web, "assets", "fnos-theme.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	imports := regexp.MustCompile(`from ['"](\.\./vendor/[^'"]+)['"]`).FindAllSubmatch(bridge, -1)
+	if len(imports) == 0 {
+		t.Fatal("official SDK module dependency missing")
+	}
+	for _, imported := range imports {
+		relative := filepath.ToSlash(filepath.Clean(filepath.Join("assets", string(imported[1]))))
+		refs = append(refs, [][]byte{nil, []byte("./" + relative)})
+	}
+	for _, badge := range []string{"vip", "svip", "zvip"} {
+		refs = append(refs, [][]byte{nil, []byte("./assets/membership/" + badge + ".png")})
+	}
 	for _, root := range []string{"", "/app/quarkdrive"} {
 		for _, ref := range refs {
 			asset := strings.TrimPrefix(string(ref[1]), ".")

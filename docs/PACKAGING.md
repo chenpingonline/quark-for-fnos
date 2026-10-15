@@ -23,6 +23,8 @@ Packaging refuses to overwrite final files for an already built version. Older `
 
 ## fnOS host contract
 
+The manifest declares `micro_app=true` for the bundled official frontend SDK. Theme integration needs fnOS 1.2.0401 or later; older hosts keep the explicitly labeled browser fallback. This does not add backend API scopes.
+
 The app retains `appname=quarkdrive`, package user/group `quarkdrive`, data-share `quarkdrive/downloads`, gateway prefix `/app/quarkdrive`, and `${TRIM_APPDEST}/app.sock`. It declares `os_min_version=1.1.3100` as the documented unified-gateway prerequisite; this is not a claim that every eligible OS build has been tested.
 
 The lifecycle uses `TRIM_APPDEST`, `TRIM_PKGVAR` and `TRIM_DATA_SHARE_PATHS`. No development authentication bypass is inherited in production. It checks executable identity through resolved `/proc/<pid>/exe`, waits for the Unix socket, and only sends stop signals while the process still belongs to the app. Downloads and encrypted state under `${TRIM_PKGVAR}/data` are retained by install/upgrade/uninstall hooks; package identity and storage grants must stay stable.

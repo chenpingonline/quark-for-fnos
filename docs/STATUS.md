@@ -1,6 +1,6 @@
-# v0.1.1 Engineering Status
+# Engineering Status
 
-Date: 2026-10-14.
+Date: 2026-10-15.
 
 ## Verified in this development environment
 
@@ -8,8 +8,11 @@ Date: 2026-10-14.
 - Local Go unit tests including 206/Content-Range, non-Range fallback, restart checkpoint loss, SHA/secret persistence, wrong 200 response, input path safety, admin gate and paused task cancellation.
 - Go race detector passes for all test scenarios (`go test -race`).
 - Browser JavaScript parse check passes (`node --check`).
-- Local HTTP static assets and REST settings health responses (not a browser end-to-end test).
-- Candidate FPK archives assemble and pass the checksum/container structure verifier.
+- Referenced UI scripts/styles are tested through the actual Go handler for standalone and fnOS gateway paths. Browser flows with fixture API data cover files, settings, search, task details and pause/resume display; these are not real Quark account tests.
+- Slow-stream HTTP regression confirms speed is reported before chunk completion without advancing durable checkpoints; four-second averaging, stalls, concurrent transfer counters, pause/resume and completion are covered.
+- Download-link requests use the desktop client profile on drive.quark.cn; request-identity consistency and credential-safe error codes are tested with mocked transport. Real large-file compatibility remains account-dependent and requires device validation.
+- Official fnpack 1.2.3 builds with source/payload/architecture/version audits; historical tar candidates remain separate.
+- Non-root ARM64 Linux container lifecycle checks passed: Unix socket health/version, symlink installation path, repeated start, stop/restart, data retention, foreign PID safety and missing resource grants. This is not real fnOS acceptance.
 
 ## Implemented, requires external validation
 
@@ -22,7 +25,7 @@ Date: 2026-10-14.
 
 ## Outstanding production requirements
 
-1. Official `fnpack` build and successful clean-device install/upgrade testing. The `_UNVERIFIED.fpk` artifacts are not official releases.
+1. Successful clean-device install/upgrade testing. Official fnpack builds are now supported; historical `_UNVERIFIED.fpk` artifacts are not official builds.
 2. Quark integration tests with an authorized account and share links. No guarantee that private API responses have not changed.
 3. Migrate JSON state to SQLite/WAL with schema migration and crash testing at scale.
 4. Port self-contained UI to Vue 3 + TypeScript if the original architecture is mandatory. Functional v0.1 UI currently uses plain JavaScript and a polling mechanism instead of WebSocket.

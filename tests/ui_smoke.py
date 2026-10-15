@@ -75,17 +75,25 @@ def run(screenshots=False):
           else if(route.startsWith('auth/qr-sessions/')) data={status:'WAITING'};
           return new Response(JSON.stringify(data), {status:200,headers:{'Content-Type':'application/json'}});
         };}''', samples)
+        page.add_script_tag(content=(ROOT/'frontend'/'assets'/'file-pages.js').read_text())
         page.add_script_tag(content=(ROOT/'frontend'/'assets'/'app.js').read_text())
         page.wait_for_timeout(250)
         assert page.locator('#drive-files tr').count()==len(files),'file list not rendered'
         assert page.locator('#drive-files [data-open]').count()==0
         assert page.locator('#drive-files th').count()==0  # headers live in thead, not tbody
         assert page.locator('#page-drive thead th').count()==5
-        # Single-click never opens folders, but double-click and Enter do.
+        assert page.locator('#drive-search-btn').count()==0
+        assert page.locator('.pagination,.file-footer').count()==0
+        assert not page.locator('#drive-download').is_visible()
+        page.locator('#page-drive [data-sort=size]').click()
+        assert page.locator('#page-drive th[aria-sort=ascending]').inner_text().strip().startswith('大小')
+        assert page.locator('#drive-files tr').first.get_attribute('data-folder-id') is not None
+        # Single-click and Enter open folders; checkboxes only select.
         row=page.locator('#drive-files tr[data-folder-id="f1"]')
-        row.click(); assert '我的备份' not in page.locator('#drive-crumbs').inner_text()
-        row.dblclick(); page.wait_for_timeout(60)
-        assert '我的备份' in page.locator('#drive-crumbs').inner_text(),'folder double-click did not navigate'
+        row.locator('input[type=checkbox]').check()
+        assert '我的备份' not in page.locator('#drive-crumbs').inner_text()
+        row.locator('.filename').click(); page.wait_for_timeout(60)
+        assert '我的备份' in page.locator('#drive-crumbs').inner_text(),'folder single-click did not navigate'
         page.locator('#drive-back').click(); page.wait_for_timeout(60)
         assert '我的备份' not in page.locator('#drive-crumbs').inner_text()
         page.locator('#drive-files tr[data-folder-id="f2"]').focus()
@@ -106,24 +114,28 @@ def run(screenshots=False):
         page.wait_for_timeout(250)
         assert page.locator('#share-files tr').count()==len(share_files),'share preview missing'
         assert page.locator('#page-share thead th').count()==4
-        page.locator('#share-files tr[data-folder-id="s1"]').dblclick(); page.wait_for_timeout(60)
-        assert '课程视频合集' in page.locator('#share-crumbs').inner_text(),'share folder double-click did not navigate'
+        page.locator('#share-files tr[data-folder-id="s1"]').click(); page.wait_for_timeout(60)
+        assert '课程视频合集' in page.locator('#share-crumbs').inner_text(),'share folder single-click did not navigate'
         page.locator('#share-crumbs button').first.click(); page.wait_for_timeout(60)
         assert '课程视频合集' not in page.locator('#share-crumbs').inner_text()
         snap('02-share-light.png')
         page.locator('[data-page=tasks]').click();page.wait_for_timeout(200)
         assert page.locator('#task-list tr').count()==len(tasks),'tasks missing'
+        assert '总速度' in page.locator('#queue-speed').inner_text()
         snap('03-tasks-light.png')
         page.locator('[data-detail=t1]').first.click();page.locator('#task-modal').wait_for(state='visible')
+        assert not page.locator('#task-diagnostics').evaluate('(el) => el.open')
         snap('04-task-detail.png');page.locator('#detail-close').click()
         page.locator('[data-page=settings]').click();page.wait_for_timeout(200);snap('05-settings-light.png')
+        page.locator('[data-section=appearance-section]').click()
         page.locator('input[name=theme-mode][value=dark]').check();assert page.locator('html').get_attribute('data-theme')=='dark'
         page.locator('[data-page=drive]').click();snap('06-drive-dark.png')
         page.locator('#account-open').click();snap('07-account.png');page.locator('#account-modal-close').click()
         page.locator('[data-page=settings]').click()
         page.on('dialog',lambda dialog:dialog.accept())
+        page.locator('[data-section=account-section]').click()
         page.locator('#logout-btn').click()
-        page.locator('#login-btn').click()
+        page.locator('#account-open').click()
         page.locator('#login-modal').wait_for(state='visible')
         snap('08-qr-login.png')
         page.locator('#modal-close').click()

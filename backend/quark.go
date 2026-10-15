@@ -20,6 +20,11 @@ import (
 const driveBase = "https://drive-pc.quark.cn/1/clouddrive"
 const webUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/124 Safari/537.36"
 
+// Download-link issuance and CDN requests use the same desktop client profile.
+// Listing and QR authentication retain their existing browser profile.
+const downloadAPI = "https://drive.quark.cn/1/clouddrive/file/download"
+const downloadUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) quark-cloud-drive/2.5.20 Chrome/100.0.4896.160 Electron/18.3.5.4-b478491100 Safari/537.36 Channel/pckk_other_ch"
+
 type Quark struct {
 	store    *Store
 	client   *http.Client
@@ -32,14 +37,20 @@ func newQuark(s *Store) *Quark {
 	return &Quark{store: s, client: &http.Client{Timeout: 35 * time.Second}, qr: map[string]*QRSession{}, previews: map[string]*SharePreview{}}
 }
 func (q *Quark) request(ctx context.Context, method, endpoint string, params url.Values, body any, login bool) (map[string]any, error) {
+	return q.requestWithUserAgent(ctx, method, endpoint, params, body, login, webUA)
+}
+
+func (q *Quark) requestWithUserAgent(ctx context.Context, method, endpoint string, params url.Values, body any, login bool, userAgent string) (map[string]any, error) {
 	if params == nil {
 		params = url.Values{}
 	}
 	if strings.Contains(endpoint, "/1/clouddrive/") {
 		params.Set("pr", "ucpro")
 		params.Set("fr", "pc")
-		params.Set("uc_param_str", "")
-		params.Set("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		if endpoint != downloadAPI {
+			params.Set("uc_param_str", "")
+			params.Set("__t", strconv.FormatInt(time.Now().UnixMilli(), 10))
+		}
 	}
 	u, e := url.Parse(endpoint)
 	if e != nil {
@@ -58,7 +69,7 @@ func (q *Quark) request(ctx context.Context, method, endpoint string, params url
 	if e != nil {
 		return nil, e
 	}
-	req.Header.Set("User-Agent", webUA)
+	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Referer", "https://pan.quark.cn/")
 	req.Header.Set("Origin", "https://pan.quark.cn")
@@ -84,7 +95,7 @@ func (q *Quark) request(ctx context.Context, method, endpoint string, params url
 		q.rotateCookie(resp.Cookies())
 	}
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("夸克接口 HTTP %d", resp.StatusCode)
+		return nil, quarkHTTPError(resp.StatusCode, resp.Body)
 	}
 	var v map[string]any
 	if e = json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&v); e != nil {
@@ -97,6 +108,28 @@ func (q *Quark) request(ctx context.Context, method, endpoint string, params url
 		return nil, fmt.Errorf("夸克接口错误 %v/%v: %s", status, code, msg)
 	}
 	return v, nil
+}
+
+// Keep structured numeric error identifiers, never the raw response: it may
+// include account identifiers, credentials or signed URLs.
+func quarkHTTPError(httpStatus int, body io.Reader) error {
+	var response map[string]json.RawMessage
+	decoder := json.NewDecoder(io.LimitReader(body, 64<<10))
+	details := []string{}
+	if decoder.Decode(&response) == nil {
+		for _, key := range []string{"code", "status"} {
+			var number json.Number
+			if json.Unmarshal(response[key], &number) == nil {
+				if value, err := number.Int64(); err == nil {
+					details = append(details, fmt.Sprintf("%s=%d", key, value))
+				}
+			}
+		}
+	}
+	if len(details) > 0 {
+		return fmt.Errorf("夸克接口 HTTP %d（%s）", httpStatus, strings.Join(details, "，"))
+	}
+	return fmt.Errorf("夸克接口 HTTP %d（未返回可识别的错误码）", httpStatus)
 }
 func dataMap(m map[string]any) map[string]any {
 	v, _ := m["data"].(map[string]any)
@@ -348,9 +381,9 @@ func (q *Quark) shareList(ctx context.Context, pr *SharePreview, parent string, 
 	return p, nil
 }
 func (q *Quark) downloadURL(ctx context.Context, fid string) (string, error) {
-	m, e := q.request(ctx, "POST", driveBase+"/file/download", nil, map[string]any{"fids": []string{fid}}, true)
+	m, e := q.requestWithUserAgent(ctx, "POST", downloadAPI, nil, map[string]any{"fids": []string{fid}}, true, downloadUA)
 	if e != nil {
-		return "", e
+		return "", fmt.Errorf("获取文件下载地址失败：%w", e)
 	}
 	list, _ := m["data"].([]any)
 	if len(list) == 0 {

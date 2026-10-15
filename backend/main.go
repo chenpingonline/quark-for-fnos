@@ -19,6 +19,9 @@ import (
 	"time"
 )
 
+// Set by scripts/build.sh from the fnOS manifest.
+var appVersion = "development"
+
 type Server struct {
 	store  *Store
 	quark  *Quark
@@ -82,6 +85,8 @@ func allowWriteOrigin(r *http.Request, dev bool) bool {
 }
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	// Revalidate UI resources so upgrades cannot mix old HTML with new scripts.
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Frame-Options", "SAMEORIGIN")
@@ -95,7 +100,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(s.web, "index.html"))
 		return
 	}
-	if path == "/assets/app.js" || path == "/assets/app.css" || path == "/assets/qr.js" || path == "/assets/theme.js" {
+	if path == "/assets/app.js" || path == "/assets/app.css" || path == "/assets/qr.js" || path == "/assets/theme.js" || path == "/assets/file-pages.js" {
 		http.ServeFile(w, r, filepath.Join(s.web, strings.TrimPrefix(path, "/")))
 		return
 	}
@@ -120,7 +125,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	sub := strings.TrimPrefix(path, "/api/v1/")
 	switch {
 	case sub == "health" && r.Method == "GET":
-		reply(w, 200, map[string]any{"ok": true, "version": "0.1.7", "mode": map[bool]string{true: "development", false: "fnos"}[s.dev]})
+		reply(w, 200, map[string]any{"ok": true, "version": appVersion, "mode": map[bool]string{true: "development", false: "fnos"}[s.dev]})
 	case sub == "auth/account" && r.Method == "GET":
 		v, e := s.quark.account(r.Context())
 		if e != nil {

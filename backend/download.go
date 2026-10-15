@@ -252,9 +252,12 @@ func (e *Engine) stop() {
 	}
 }
 func (e *Engine) run(ctx context.Context, id string) {
+	meter := &transferMeter{}
+	ctx = context.WithValue(ctx, transferMeterKey{}, meter)
 	progressCtx, cancelProgress := context.WithCancel(ctx)
-	defer cancelProgress()
-	go e.speedLoop(progressCtx, id)
+	progressDone := make(chan struct{})
+	defer func() { cancelProgress(); <-progressDone }()
+	go func() { defer close(progressDone); e.speedLoop(progressCtx, id, meter) }()
 	t := e.store.task(id)
 	if t == nil {
 		return
@@ -272,7 +275,7 @@ func (e *Engine) run(ctx context.Context, id string) {
 		fail(errors.New("请先设置并授权 NAS 下载目录"))
 		return
 	}
-	_ = e.store.setTask(id, func(t *Task) { t.Status = "RESOLVING"; t.Message = "" })
+	_ = e.store.setTask(id, func(t *Task) { t.Status = "RESOLVING"; t.Message = ""; t.Speed = 0 })
 	t = e.store.task(id)
 	if t.Kind == "share" && t.SavedID == "" {
 		fid, err := e.quark.saveShared(ctx, t)
@@ -318,6 +321,7 @@ func (e *Engine) run(ctx context.Context, id string) {
 		delay := time.Duration(1<<min(attempt, 5)) * time.Second
 		_ = e.store.setTask(id, func(x *Task) {
 			x.Status = "RETRY_WAIT"
+			x.Speed = 0
 			x.Message = fmt.Sprintf("%s，%s 后重试", err, delay)
 			x.Attempts++
 		})
@@ -362,7 +366,7 @@ func (e *Engine) newDownloadRequest(ctx context.Context, raw string, byteRange s
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", webUA)
+	req.Header.Set("User-Agent", downloadUA)
 	req.Header.Set("Referer", "https://pan.quark.cn/")
 	req.Header.Set("Accept-Encoding", "identity")
 	if byteRange != "" {
@@ -642,6 +646,7 @@ func (e *Engine) download(ctx context.Context, t *Task) error {
 								err = werr
 								break
 							}
+							recordTransfer(child, int64(n))
 							off += int64(n)
 							written += int64(n)
 						}
@@ -703,7 +708,7 @@ func (e *Engine) download(ctx context.Context, t *Task) error {
 	if first != nil {
 		return first
 	}
-	_ = e.store.setTask(t.ID, func(t *Task) { t.Status = "VERIFYING" })
+	_ = e.store.setTask(t.ID, func(t *Task) { t.Status = "VERIFYING"; t.Speed = 0 })
 	return e.publishVerified(f, t.ID, tmp, target)
 }
 
@@ -729,7 +734,7 @@ func (e *Engine) publishVerified(f *os.File, id, tmp, target string) error {
 	if err != nil {
 		return err
 	}
-	if err = e.store.setTask(id, func(t *Task) { t.SHA256 = digest; t.Status = "VERIFYING" }); err != nil {
+	if err = e.store.setTask(id, func(t *Task) { t.SHA256 = digest; t.Status = "VERIFYING"; t.Speed = 0 }); err != nil {
 		return err
 	}
 	return finishFile(f, tmp, target)
@@ -889,6 +894,7 @@ func (e *Engine) downloadSequential(ctx context.Context, u string, f *os.File, t
 			if _, err = f.Write(buf[:m]); err != nil {
 				return err
 			}
+			recordTransfer(ctx, int64(m))
 			n += int64(m)
 			if n > total {
 				return errors.New("下载内容超过云端声明大小")
@@ -913,30 +919,38 @@ func (e *Engine) downloadSequential(ctx context.Context, u string, f *os.File, t
 	return f.Sync()
 }
 
-func (e *Engine) speedLoop(ctx context.Context, id string) {
+func (e *Engine) speedLoop(ctx context.Context, id string, meter *transferMeter) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
-	last := int64(0)
-	if t := e.store.task(id); t != nil {
-		last = t.Downloaded
-	}
+	var window speedWindow
+	window.reset(time.Now(), meter.bytes.Load())
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
-			t := e.store.task(id)
-			if t == nil {
+			if ctx.Err() != nil {
 				return
 			}
-			rate := t.Downloaded - last
-			last = t.Downloaded
-			if rate < 0 {
-				rate = 0
+			task := e.store.task(id)
+			if task == nil {
+				return
 			}
-			if t.Status == "DOWNLOADING" {
-				_ = e.store.setTask(id, func(x *Task) { x.Speed = rate })
+			now := time.Now()
+			received := meter.bytes.Load()
+			rate := int64(0)
+			if task.Status == "DOWNLOADING" {
+				rate = window.sample(now, received)
+			} else {
+				window.reset(now, received)
 			}
+			_ = e.store.setTask(id, func(task *Task) {
+				if task.Status == "DOWNLOADING" {
+					task.Speed = rate
+				} else {
+					task.Speed = 0
+				}
+			})
 		}
 	}
 }
